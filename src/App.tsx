@@ -30,9 +30,9 @@ function App() {
   const canvasHeight = 10000 // Virtual canvas height
   const tempCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const isDrawingRef = useRef(false)
-  const lastDrawTimeRef = useRef(0)
+
   const currentDrawPointRef = useRef<Point | null>(null)
-  const lastScrollOffsetRef = useRef(0)
+
 
   // Initialize canvas
   useEffect(() => {
@@ -450,7 +450,7 @@ function App() {
     exportCtx.fillRect(0, 0, exportCanvas.width, exportCanvas.height)
 
     // Draw the drawing layer (cropped to actual height)
-    const croppedLayer = drawingLayer
+
     const sourceHeight = Math.min(actualHeight, canvasHeight)
 
     // Create a temporary canvas to extract the exact region we need
