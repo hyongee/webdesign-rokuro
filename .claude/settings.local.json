@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cp -r vibe-layout-painter/src/* src/)",
+      "Bash(cp vibe-layout-painter/package.json package.json)",
+      "Bash(cp vibe-layout-painter/index.html index.html)",
+      "Bash(cp vibe-layout-painter/tsconfig.json tsconfig.json)",
+      "Bash(cp vibe-layout-painter/tsconfig.app.json tsconfig.app.json)",
+      "Bash(cp vibe-layout-painter/tsconfig.node.json tsconfig.node.json)",
+      "Bash(cp vibe-layout-painter/vite.config.ts vite.config.ts)",
+      "Bash(cp vibe-layout-painter/eslint.config.js eslint.config.js)",
+      "Bash(mv Icon_Settings.svg src/assets/)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
