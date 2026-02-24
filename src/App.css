@@ -20,6 +20,17 @@ body {
   position: relative;
 }
 
+.app-title {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  font-size: 16px;
+  color: #999;
+  font-weight: 400;
+  z-index: 10;
+  pointer-events: none;
+}
+
 .canvas {
   border: 1px solid #333;
   cursor: none;
@@ -49,8 +60,42 @@ body {
 }
 
 .top-left {
-  top: 20px;
+  top: 60px;
   left: 20px;
+}
+
+.canvas-length-input {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.canvas-length-input label {
+  font-size: 12px;
+  color: #666;
+  font-weight: 500;
+}
+
+.canvas-length-input input {
+  padding: 8px 12px;
+  font-size: 13px;
+  border: 1px solid #333;
+  border-radius: 2px;
+  background: white;
+  color: #333;
+  width: 150px;
+  transition: all 0.15s;
+}
+
+.canvas-length-input input:focus {
+  outline: none;
+  border-color: #666;
+}
+
+.canvas-length-input input:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  background: #f5f5f5;
 }
 
 .top-center {

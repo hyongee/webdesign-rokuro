@@ -11,36 +11,33 @@ function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [isRecording, setIsRecording] = useState(false)
   const [scrollOffset, setScrollOffset] = useState(0)
-  const [drawingLayer, setDrawingLayer] = useState<ImageData | null>(null)
   const [brushSize, setBrushSize] = useState(205) // medium
   const [scrollSpeed, setScrollSpeed] = useState(2) // px per frame
+  const [canvasLength, setCanvasLength] = useState(5000) // User-configurable canvas length
+  const [canvaslengthInput, setCanvasLengthInput] = useState('5000')
   const [isDrawing, setIsDrawing] = useState(false)
   const [lastPoint, setLastPoint] = useState<Point | null>(null)
   const [isFullPaintMode, setIsFullPaintMode] = useState(false)
   const [fullPaintStartY, setFullPaintStartY] = useState<number | null>(null)
   const [showSettings, setShowSettings] = useState(false)
   const [isFullPaintActive, setIsFullPaintActive] = useState(false)
-  const [maxScrollOffset, setMaxScrollOffset] = useState(0)
   const [cursorPosition, setCursorPosition] = useState<Point | null>(null)
   const [showCursor, setShowCursor] = useState(false)
-  const [hasRecorded, setHasRecorded] = useState(false)
+  const [currentLoopIndex, setCurrentLoopIndex] = useState(0)
 
   const animationFrameRef = useRef<number | undefined>(undefined)
-  const drawingAnimationRef = useRef<number | undefined>(undefined)
-  const canvasHeight = 10000 // Virtual canvas height
-  const tempCanvasRef = useRef<HTMLCanvasElement | null>(null)
+
+  // Drawing canvas - persistent, directly drawn to (no ImageData)
+  const drawingCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const isDrawingRef = useRef(false)
-
   const currentDrawPointRef = useRef<Point | null>(null)
+  const lastDrawTimeRef = useRef<number>(0)
+  const scrollOffsetRef = useRef<number>(0)
 
-
-  // Initialize canvas
+  // Initialize drawing canvas
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
-
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
 
     // Set canvas size (17:8 aspect ratio, responsive to window width)
     const updateCanvasSize = () => {
@@ -48,32 +45,121 @@ function App() {
       const height = width * (8 / 17)
       canvas.width = width
       canvas.height = height
+
+      // Recreate drawing canvas with new size
+      const drawingCanvas = document.createElement('canvas')
+      drawingCanvas.width = width
+      drawingCanvas.height = canvasLength
+      const ctx = drawingCanvas.getContext('2d', { willReadFrequently: true })
+      if (ctx) {
+        ctx.fillStyle = 'white'
+        ctx.fillRect(0, 0, width, canvasLength)
+      }
+      drawingCanvasRef.current = drawingCanvas
     }
 
     updateCanvasSize()
     window.addEventListener('resize', updateCanvasSize)
 
-    // Initialize with white background
-    ctx.fillStyle = 'white'
-    ctx.fillRect(0, 0, canvas.width, canvasHeight)
-
     return () => {
       window.removeEventListener('resize', updateCanvasSize)
     }
-  }, [])
+  }, [canvasLength])
 
-  // Auto-scroll animation
+  // Unified animation loop for scrolling, drawing, and rendering
   useEffect(() => {
     if (!isRecording) return
 
+    let localScrollOffset = scrollOffset
+
     const animate = () => {
-      setScrollOffset(prev => {
-        const newOffset = prev + scrollSpeed
-        // Track maximum scroll offset for export
-        setMaxScrollOffset(current => Math.max(current, newOffset))
-        // Loop back if we exceed canvas height
-        return newOffset >= canvasHeight ? 0 : newOffset
-      })
+      const canvas = canvasRef.current
+      const drawingCanvas = drawingCanvasRef.current
+
+      if (!canvas || !drawingCanvas) {
+        animationFrameRef.current = requestAnimationFrame(animate)
+        return
+      }
+
+      const drawingCtx = drawingCanvas.getContext('2d', { willReadFrequently: true })
+      const displayCtx = canvas.getContext('2d')
+      if (!drawingCtx || !displayCtx) {
+        animationFrameRef.current = requestAnimationFrame(animate)
+        return
+      }
+
+      // Update scroll offset (use local variable to avoid React state delays)
+      localScrollOffset += scrollSpeed
+
+      // Check if we've completed a loop
+      if (localScrollOffset >= canvasLength) {
+        setCurrentLoopIndex(idx => idx + 1)
+        localScrollOffset = localScrollOffset - canvasLength
+      }
+
+      // Update both React state (for UI display) and ref (for drawing functions)
+      setScrollOffset(localScrollOffset)
+      scrollOffsetRef.current = localScrollOffset
+
+      // Continuous drawing in normal mode
+      if (isDrawingRef.current && currentDrawPointRef.current && !isFullPaintActive) {
+        const point = currentDrawPointRef.current
+        const virtualY = (point.y + localScrollOffset) % canvasLength // Wrap around for loop recording
+
+        drawingCtx.fillStyle = '#000000'
+        const brushWidth = brushSize
+        const brushHeight = brushSize / 8
+        drawingCtx.fillRect(
+          point.x - brushWidth / 2,
+          virtualY - brushHeight / 2,
+          brushWidth,
+          brushHeight
+        )
+      }
+
+      // Continuous drawing in Full Paint Mode
+      if (isFullPaintActive && fullPaintStartY !== null) {
+        const virtualY = (fullPaintStartY + localScrollOffset) % canvasLength // Wrap around for loop recording
+
+        drawingCtx.fillStyle = '#000000'
+        drawingCtx.fillRect(0, virtualY - 2, canvas.width, 4)
+      }
+
+      // Render to display canvas (moved here from useEffect)
+      displayCtx.fillStyle = 'white'
+      displayCtx.fillRect(0, 0, canvas.width, canvas.height)
+
+      const availableHeight = canvasLength - localScrollOffset
+
+      if (availableHeight >= canvas.height) {
+        // Simple case: enough space to show full viewport
+        displayCtx.drawImage(
+          drawingCanvas,
+          0, localScrollOffset,
+          canvas.width, canvas.height,
+          0, 0,
+          canvas.width, canvas.height
+        )
+      } else {
+        // Near end: show what's available from current position
+        displayCtx.drawImage(
+          drawingCanvas,
+          0, localScrollOffset,
+          canvas.width, availableHeight,
+          0, 0,
+          canvas.width, availableHeight
+        )
+        // Show the beginning of the canvas for the remaining space (loop visualization)
+        const remainingHeight = canvas.height - availableHeight
+        displayCtx.drawImage(
+          drawingCanvas,
+          0, 0,
+          canvas.width, remainingHeight,
+          0, availableHeight,
+          canvas.width, remainingHeight
+        )
+      }
+
       animationFrameRef.current = requestAnimationFrame(animate)
     }
 
@@ -84,109 +170,32 @@ function App() {
         cancelAnimationFrame(animationFrameRef.current)
       }
     }
-  }, [isRecording, scrollSpeed])
+  }, [isRecording, scrollSpeed, brushSize, isFullPaintActive, fullPaintStartY, canvasLength])
 
-  // Initialize temp canvas for drawing operations (update on canvas size change)
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-
-    const tempCanvas = document.createElement('canvas')
-    tempCanvas.width = canvas.width
-    tempCanvas.height = canvasHeight
-    tempCanvasRef.current = tempCanvas
-  }, [canvasRef.current?.width])
-
-  // Optimized continuous drawing animation
-  useEffect(() => {
-    if (!isRecording) {
-      if (drawingAnimationRef.current) {
-        cancelAnimationFrame(drawingAnimationRef.current)
-        drawingAnimationRef.current = undefined
-      }
-      return
-    }
-
-    let lastUpdateTime = 0
-    const updateInterval = 1000 / 60 // 60 FPS throttle for state updates
-
-    const animate = (currentTime: number) => {
-      const canvas = canvasRef.current
-      const tempCanvas = tempCanvasRef.current
-      if (!canvas || !tempCanvas || !drawingLayer) {
-        drawingAnimationRef.current = requestAnimationFrame(animate)
-        return
-      }
-
-      const tempCtx = tempCanvas.getContext('2d')
-      if (!tempCtx) {
-        drawingAnimationRef.current = requestAnimationFrame(animate)
-        return
-      }
-
-      let shouldUpdate = false
-
-      // Draw continuously if pointer is down in normal mode
-      if (isDrawingRef.current && currentDrawPointRef.current && !isFullPaintActive) {
-        // Put drawing layer on temp canvas
-        tempCtx.putImageData(drawingLayer, 0, 0)
-
-        // Draw at the current point with current scroll offset (horizontal rectangle 8:1)
-        const virtualY = currentDrawPointRef.current.y + scrollOffset
-        tempCtx.fillStyle = '#000000'
-        const brushWidth = brushSize
-        const brushHeight = brushSize / 8
-        tempCtx.fillRect(
-          currentDrawPointRef.current.x - brushWidth / 2,
-          virtualY - brushHeight / 2,
-          brushWidth,
-          brushHeight
-        )
-        shouldUpdate = true
-      }
-
-      // Draw continuously in Full Paint Mode when active
-      if (isFullPaintActive && fullPaintStartY !== null) {
-        // Put drawing layer on temp canvas
-        tempCtx.putImageData(drawingLayer, 0, 0)
-
-        // Draw full width band at the touch position
-        const virtualY = fullPaintStartY + scrollOffset
-        tempCtx.fillStyle = '#000000'
-        tempCtx.fillRect(0, virtualY - 2, canvas.width, 4)
-        shouldUpdate = true
-      }
-
-      // Only update state at throttled interval to avoid excessive re-renders
-      if (shouldUpdate && currentTime - lastUpdateTime >= updateInterval) {
-        const updatedLayer = tempCtx.getImageData(0, 0, canvas.width, canvasHeight)
-        setDrawingLayer(updatedLayer)
-        lastUpdateTime = currentTime
-      }
-
-      drawingAnimationRef.current = requestAnimationFrame(animate)
-    }
-
-    drawingAnimationRef.current = requestAnimationFrame(animate)
-
-    return () => {
-      if (drawingAnimationRef.current) {
-        cancelAnimationFrame(drawingAnimationRef.current)
-      }
-    }
-  }, [isRecording, drawingLayer, scrollOffset, brushSize, isFullPaintActive, fullPaintStartY])
-
-  // Keyboard event listener for Space key
+  // Keyboard event listener for Shift (Full Paint) and Space (Start/Stop Recording)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Shift key for Full Paint Mode
+      if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
+        if (!e.repeat && isRecording) {
+          e.preventDefault()
+          setIsFullPaintMode(true)
+        }
+      }
+
+      // Space key for Start/Stop Recording
       if (e.code === 'Space' && !e.repeat) {
         e.preventDefault()
-        setIsFullPaintMode(true)
+        if (isRecording) {
+          stopRecording()
+        } else {
+          startRecording()
+        }
       }
     }
 
     const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.code === 'Space') {
+      if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
         e.preventDefault()
         setIsFullPaintMode(false)
       }
@@ -199,142 +208,85 @@ function App() {
       window.removeEventListener('keydown', handleKeyDown)
       window.removeEventListener('keyup', handleKeyUp)
     }
-  }, [])
-
-  // Render canvas
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-
-    // Clear and draw white background
-    ctx.fillStyle = 'white'
-    ctx.fillRect(0, 0, canvas.width, canvas.height)
-
-    // Create a temporary canvas for the full virtual canvas
-    const tempCanvas = document.createElement('canvas')
-    tempCanvas.width = canvas.width
-    tempCanvas.height = canvasHeight
-    const tempCtx = tempCanvas.getContext('2d')
-    if (!tempCtx) return
-
-    // Draw white background on temp canvas
-    tempCtx.fillStyle = 'white'
-    tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height)
-
-    // Draw the single drawing layer if exists
-    if (drawingLayer) {
-      tempCtx.putImageData(drawingLayer, 0, 0)
-    }
-
-    // Copy visible portion to main canvas
-    ctx.drawImage(
-      tempCanvas,
-      0, scrollOffset,
-      canvas.width, canvas.height,
-      0, 0,
-      canvas.width, canvas.height
-    )
-  }, [scrollOffset, drawingLayer])
+  }, [isRecording])
 
   const startRecording = () => {
     const canvas = canvasRef.current
     if (!canvas) return
 
-    const ctx = canvas.getContext('2d')
+    // Create new drawing canvas for this session
+    const drawingCanvas = document.createElement('canvas')
+    drawingCanvas.width = canvas.width
+    drawingCanvas.height = canvasLength
+    const ctx = drawingCanvas.getContext('2d', { willReadFrequently: true })
     if (!ctx) return
 
-    // Update temp canvas size to match current canvas size
-    const tempCanvas = document.createElement('canvas')
-    tempCanvas.width = canvas.width
-    tempCanvas.height = canvasHeight
-    tempCanvasRef.current = tempCanvas
+    // Initialize with white background
+    ctx.fillStyle = 'white'
+    ctx.fillRect(0, 0, drawingCanvas.width, drawingCanvas.height)
 
-    // Create new drawing layer for this single recording session
-    const tempCtx = tempCanvas.getContext('2d')
-    if (!tempCtx) return
-
-    // Initialize with transparent
-    tempCtx.clearRect(0, 0, tempCanvas.width, tempCanvas.height)
-    const newLayerData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height)
-    setDrawingLayer(newLayerData)
+    drawingCanvasRef.current = drawingCanvas
 
     setIsRecording(true)
     setScrollOffset(0)
-    setMaxScrollOffset(0)
+    setCurrentLoopIndex(0)
   }
 
   const stopRecording = () => {
     setIsRecording(false)
-    setHasRecorded(true)
   }
 
   const drawBrush = (x: number, y: number) => {
-    if (!drawingLayer) return
-
     const canvas = canvasRef.current
-    if (!canvas) return
+    const drawingCanvas = drawingCanvasRef.current
+    if (!canvas || !drawingCanvas) return
 
-    // Convert screen coordinates to virtual canvas coordinates
-    const virtualY = y + scrollOffset
+    // Use ref instead of state to get the latest value
+    const currentScrollOffset = scrollOffsetRef.current
+    const virtualY = (y + currentScrollOffset) % canvasLength // Wrap around for loop recording
+    const ctx = drawingCanvas.getContext('2d')
+    if (!ctx) return
 
-    // Draw on drawing layer
-    const tempCanvas = tempCanvasRef.current
-    if (!tempCanvas) return
-
-    const tempCtx = tempCanvas.getContext('2d')
-    if (!tempCtx) return
-
-    tempCtx.putImageData(drawingLayer, 0, 0)
-
-    // Use solid black color (100% opacity) and horizontal rectangular brush (8:1 aspect ratio)
-    tempCtx.fillStyle = '#000000'
+    ctx.fillStyle = '#000000'
     const brushWidth = brushSize
     const brushHeight = brushSize / 8
-    tempCtx.fillRect(x - brushWidth / 2, virtualY - brushHeight / 2, brushWidth, brushHeight)
-
-    const updatedLayer = tempCtx.getImageData(0, 0, canvas.width, canvasHeight)
-    setDrawingLayer(updatedLayer)
+    ctx.fillRect(x - brushWidth / 2, virtualY - brushHeight / 2, brushWidth, brushHeight)
   }
 
+  // Optimized drawLine using efficient interpolation
   const drawLine = (x1: number, y1: number, x2: number, y2: number) => {
-    if (!drawingLayer) return
-
     const canvas = canvasRef.current
-    const tempCanvas = tempCanvasRef.current
-    if (!canvas || !tempCanvas) return
+    const drawingCanvas = drawingCanvasRef.current
+    if (!canvas || !drawingCanvas) return
 
-    const tempCtx = tempCanvas.getContext('2d')
-    if (!tempCtx) return
+    const ctx = drawingCanvas.getContext('2d')
+    if (!ctx) return
 
-    tempCtx.putImageData(drawingLayer, 0, 0)
+    // Use ref instead of state to get the latest value
+    const currentScrollOffset = scrollOffsetRef.current
 
-    // Draw line as series of horizontal rectangles (8:1 aspect ratio) for better performance
     const distance = Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
     const brushHeight = brushSize / 8
-    const steps = Math.max(Math.floor(distance / (brushHeight / 2)), 1)
 
-    tempCtx.fillStyle = '#000000'
+    // Optimize steps based on brush size - fewer steps for larger brushes
+    const steps = Math.ceil(distance / Math.max(brushHeight * 0.5, 1))
+
+    ctx.fillStyle = '#000000'
     const brushWidth = brushSize
 
     for (let i = 0; i <= steps; i++) {
       const t = i / steps
       const x = x1 + (x2 - x1) * t
       const y = y1 + (y2 - y1) * t
-      const virtualY = y + scrollOffset
-      tempCtx.fillRect(x - brushWidth / 2, virtualY - brushHeight / 2, brushWidth, brushHeight)
-    }
+      const virtualY = (y + currentScrollOffset) % canvasLength // Wrap around for loop recording
 
-    const updatedLayer = tempCtx.getImageData(0, 0, canvas.width, canvasHeight)
-    setDrawingLayer(updatedLayer)
+      ctx.fillRect(x - brushWidth / 2, virtualY - brushHeight / 2, brushWidth, brushHeight)
+    }
   }
 
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!isRecording) return
 
-    // Prevent default browser behavior (drag, text selection, etc.)
     e.preventDefault()
 
     const canvas = canvasRef.current
@@ -364,22 +316,26 @@ function App() {
     const x = e.clientX - rect.left
     const y = e.clientY - rect.top
 
-    // Update cursor position for preview
     setCursorPosition({ x, y })
 
     if (!isRecording) return
 
-    // Prevent default browser behavior (drag, text selection, etc.)
     e.preventDefault()
 
     if (isFullPaintMode && fullPaintStartY !== null) {
-      // Update the y position for continuous full paint mode
       setFullPaintStartY(y)
-      // Also draw the band between start and current for drag effect
       drawFullWidthBand(fullPaintStartY, y)
     } else if (isDrawing && lastPoint) {
-      drawLine(lastPoint.x, lastPoint.y, x, y)
-      setLastPoint({ x, y })
+      // Throttle drawing updates for better performance
+      const now = performance.now()
+      if (now - lastDrawTimeRef.current > 8) { // ~120 FPS limit
+        drawLine(lastPoint.x, lastPoint.y, x, y)
+        setLastPoint({ x, y })
+        currentDrawPointRef.current = { x, y }
+        lastDrawTimeRef.current = now
+      }
+    } else if (isDrawing) {
+      // Update current draw point even when not moving much
       currentDrawPointRef.current = { x, y }
     }
   }
@@ -403,45 +359,55 @@ function App() {
   }
 
   const drawFullWidthBand = (startY: number, endY: number) => {
-    if (!drawingLayer) return
-
     const canvas = canvasRef.current
-    const tempCanvas = tempCanvasRef.current
-    if (!canvas || !tempCanvas) return
+    const drawingCanvas = drawingCanvasRef.current
+    if (!canvas || !drawingCanvas) return
 
-    const virtualStartY = startY + scrollOffset
-    const virtualEndY = endY + scrollOffset
+    // Use ref instead of state to get the latest value
+    const currentScrollOffset = scrollOffsetRef.current
+    const virtualStartY = (startY + currentScrollOffset) % canvasLength
+    const virtualEndY = (endY + currentScrollOffset) % canvasLength
 
-    const tempCtx = tempCanvas.getContext('2d')
-    if (!tempCtx) return
+    const ctx = drawingCanvas.getContext('2d')
+    if (!ctx) return
 
-    tempCtx.putImageData(drawingLayer, 0, 0)
-
-    tempCtx.fillStyle = '#000000'
+    ctx.fillStyle = '#000000'
     const minY = Math.min(virtualStartY, virtualEndY)
     const maxY = Math.max(virtualStartY, virtualEndY)
-    tempCtx.fillRect(0, minY, canvas.width, maxY - minY)
 
-    const updatedLayer = tempCtx.getImageData(0, 0, canvas.width, canvasHeight)
-    setDrawingLayer(updatedLayer)
+    ctx.fillRect(0, minY, canvas.width, maxY - minY)
   }
 
   const handleClear = () => {
-    setDrawingLayer(null)
-    setHasRecorded(false)
+    const canvas = canvasRef.current
+    const drawingCanvas = drawingCanvasRef.current
+    if (!canvas || !drawingCanvas) return
+
+    const ctx = drawingCanvas.getContext('2d')
+    if (!ctx) return
+
+    ctx.fillStyle = 'white'
+    ctx.fillRect(0, 0, drawingCanvas.width, drawingCanvas.height)
+
+    setCurrentLoopIndex(0)
+    setScrollOffset(0)
+  }
+
+  const handleUndoLastLoop = () => {
+    // Temporarily disabled - will implement with proper drawing history
+    alert('Undo Last Loop feature is temporarily disabled for performance optimization')
+    return
   }
 
   const handleExport = () => {
     const canvas = canvasRef.current
-    if (!canvas || !drawingLayer) return
+    const drawingCanvas = drawingCanvasRef.current
+    if (!canvas || !drawingCanvas) return
 
-    // Calculate actual recorded height (max scroll + viewport height)
-    const actualHeight = Math.ceil(maxScrollOffset + canvas.height)
-
-    // Create export canvas with actual recorded height
+    // Create export canvas with the set canvas length
     const exportCanvas = document.createElement('canvas')
     exportCanvas.width = canvas.width
-    exportCanvas.height = actualHeight
+    exportCanvas.height = canvasLength
     const exportCtx = exportCanvas.getContext('2d')
     if (!exportCtx) return
 
@@ -449,19 +415,8 @@ function App() {
     exportCtx.fillStyle = 'white'
     exportCtx.fillRect(0, 0, exportCanvas.width, exportCanvas.height)
 
-    // Draw the drawing layer (cropped to actual height)
-
-    const sourceHeight = Math.min(actualHeight, canvasHeight)
-
-    // Create a temporary canvas to extract the exact region we need
-    const tempCanvas = document.createElement('canvas')
-    tempCanvas.width = canvas.width
-    tempCanvas.height = canvasHeight
-    const tempCtx = tempCanvas.getContext('2d')
-    if (!tempCtx) return
-
-    tempCtx.putImageData(drawingLayer, 0, 0)
-    exportCtx.drawImage(tempCanvas, 0, 0, canvas.width, sourceHeight, 0, 0, canvas.width, sourceHeight)
+    // Draw the entire drawing canvas
+    exportCtx.drawImage(drawingCanvas, 0, 0)
 
     // Download
     exportCanvas.toBlob(blob => {
@@ -475,8 +430,31 @@ function App() {
     })
   }
 
+  const handleCanvasLengthChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value
+    setCanvasLengthInput(value)
+
+    const numValue = parseInt(value, 10)
+    if (!isNaN(numValue) && numValue >= 2000 && numValue <= 10000) {
+      setCanvasLength(numValue)
+    }
+  }
+
+  const handleCanvasLengthBlur = () => {
+    const numValue = parseInt(canvaslengthInput, 10)
+    if (isNaN(numValue) || numValue < 2000) {
+      setCanvasLengthInput('2000')
+      setCanvasLength(2000)
+    } else if (numValue > 10000) {
+      setCanvasLengthInput('10000')
+      setCanvasLength(10000)
+    }
+  }
+
   return (
     <div className="app">
+      <div className="app-title">Web Design Rokuro</div>
+
       <canvas
         ref={canvasRef}
         className="canvas"
@@ -503,6 +481,31 @@ function App() {
 
       <div className="controls">
         <div className="top-left">
+          <div className="canvas-length-input">
+            <label htmlFor="canvas-length">Canvas Length (px)</label>
+            <input
+              id="canvas-length"
+              type="number"
+              min="2000"
+              max="10000"
+              step="100"
+              value={canvaslengthInput}
+              onChange={handleCanvasLengthChange}
+              onBlur={handleCanvasLengthBlur}
+              disabled={isRecording}
+            />
+          </div>
+        </div>
+
+        {isRecording && (
+          <div className="top-center">
+            <div className="pixel-counter">
+              {Math.floor(scrollOffset)}px / {canvasLength}px (Loop {currentLoopIndex + 1})
+            </div>
+          </div>
+        )}
+
+        <div className="top-right">
           <button
             onClick={isRecording ? stopRecording : startRecording}
             className={isRecording ? 'recording' : ''}
@@ -511,22 +514,12 @@ function App() {
           </button>
         </div>
 
-        <div className="top-center">
-          {isRecording && (
-            <div className="pixel-counter">
-              {Math.ceil(maxScrollOffset + (canvasRef.current?.height || 0))}px recorded
-            </div>
-          )}
-        </div>
-
-        <div className="top-right">
-          <button
-            className="settings-fab"
-            onClick={() => setShowSettings(!showSettings)}
-            disabled={isRecording}
-          >
-            <img src={settingsIcon} alt="Settings" width="24" height="24" />
+        <div className="bottom-left">
+          <button onClick={handleUndoLastLoop} disabled={!isRecording}>
+            Undo Last Loop
           </button>
+          <button onClick={handleClear}>Clear</button>
+          <button onClick={handleExport}>Export</button>
         </div>
 
         {isRecording && (
@@ -537,17 +530,20 @@ function App() {
               onPointerUp={() => setIsFullPaintMode(false)}
               onPointerLeave={() => setIsFullPaintMode(false)}
             >
-              Full Paint Mode (Hold Space)
+              Full Paint Mode (Hold Shift)
             </button>
           </div>
         )}
 
-        {hasRecorded && !isRecording && (
-          <div className="bottom-right">
-            <button onClick={handleClear}>Clear</button>
-            <button onClick={handleExport}>Export</button>
-          </div>
-        )}
+        <div className="bottom-right">
+          <button
+            className="settings-fab"
+            onClick={() => setShowSettings(!showSettings)}
+            disabled={isRecording}
+          >
+            <img src={settingsIcon} alt="Settings" width="24" height="24" />
+          </button>
+        </div>
       </div>
 
       {showSettings && (
