@@ -1,6 +1,5 @@
 import { useRef, useEffect, useState } from 'react'
 import './App.css'
-import settingsIcon from './assets/Icon_Settings.svg'
 
 interface Point {
   x: number
@@ -453,97 +452,97 @@ function App() {
 
   return (
     <div className="app">
-      <div className="app-title">Web Design Rokuro</div>
-
-      <canvas
-        ref={canvasRef}
-        className="canvas"
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-        onPointerLeave={handlePointerUp}
-        onMouseEnter={handleCanvasMouseEnter}
-        onMouseLeave={handleCanvasMouseLeave}
-      />
-
-      {/* Brush preview cursor */}
-      {showCursor && cursorPosition && canvasRef.current && (
-        <div
-          className="brush-cursor"
-          style={{
-            left: `${canvasRef.current.getBoundingClientRect().left + cursorPosition.x}px`,
-            top: `${canvasRef.current.getBoundingClientRect().top + cursorPosition.y}px`,
-            width: `${brushSize}px`,
-            height: `${brushSize / 8}px`,
-          }}
+      <div className="canvas-container">
+        <canvas
+          ref={canvasRef}
+          className="canvas"
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerLeave={handlePointerUp}
+          onMouseEnter={handleCanvasMouseEnter}
+          onMouseLeave={handleCanvasMouseLeave}
         />
-      )}
 
-      <div className="controls">
-        <div className="top-left">
-          <div className="canvas-length-input">
-            <label htmlFor="canvas-length">Canvas Length (px)</label>
-            <input
-              id="canvas-length"
-              type="number"
-              min="2000"
-              max="10000"
-              step="100"
-              value={canvaslengthInput}
-              onChange={handleCanvasLengthChange}
-              onBlur={handleCanvasLengthBlur}
-              disabled={isRecording}
-            />
-          </div>
-        </div>
-
-        {isRecording && (
-          <div className="top-center">
-            <div className="pixel-counter">
-              {Math.floor(scrollOffset)}px / {canvasLength}px (Loop {currentLoopIndex + 1})
-            </div>
-          </div>
+        {/* Brush preview cursor */}
+        {showCursor && cursorPosition && canvasRef.current && (
+          <div
+            className="brush-cursor"
+            style={{
+              left: `${canvasRef.current.getBoundingClientRect().left + cursorPosition.x}px`,
+              top: `${canvasRef.current.getBoundingClientRect().top + cursorPosition.y}px`,
+              width: `${brushSize}px`,
+              height: `${brushSize / 8}px`,
+            }}
+          />
         )}
 
-        <div className="top-right">
-          <button
-            onClick={isRecording ? stopRecording : startRecording}
-            className={isRecording ? 'recording' : ''}
-          >
-            {isRecording ? 'Stop Recording' : 'Start Recording'}
-          </button>
-        </div>
-
-        <div className="bottom-left">
-          <button onClick={handleUndoLastLoop} disabled={!isRecording}>
-            Undo Last Loop
-          </button>
-          <button onClick={handleClear}>Clear</button>
-          <button onClick={handleExport}>Export</button>
-        </div>
-
-        {isRecording && (
-          <div className="bottom-center">
+        <div className="canvas-controls">
+          {/* Top Left: Canvas settings */}
+          <div className="top-left">
+            <div className="canvas-length-input">
+              <label htmlFor="canvas-length">Canvas Length (px)</label>
+              <input
+                id="canvas-length"
+                type="number"
+                min="2000"
+                max="10000"
+                step="100"
+                value={canvaslengthInput}
+                onChange={handleCanvasLengthChange}
+                onBlur={handleCanvasLengthBlur}
+                disabled={isRecording}
+              />
+            </div>
             <button
-              className={`full-paint-btn ${isFullPaintMode ? 'active' : ''}`}
-              onPointerDown={() => setIsFullPaintMode(true)}
-              onPointerUp={() => setIsFullPaintMode(false)}
-              onPointerLeave={() => setIsFullPaintMode(false)}
+              className="settings-btn"
+              onClick={() => setShowSettings(!showSettings)}
+              disabled={isRecording}
             >
-              Full Paint Mode (Hold Shift)
+              Settings
             </button>
           </div>
-        )}
 
-        <div className="bottom-right">
+          {/* Top Right: Drawing actions */}
+          <div className="top-right">
+            <button onClick={handleUndoLastLoop} disabled={!isRecording}>
+              Undo
+            </button>
+            <button onClick={handleClear}>Clear</button>
+            <button onClick={handleExport}>Export</button>
+          </div>
+        </div>
+
+        {/* Bottom Center: Recording control with progress */}
+        <div className="canvas-bottom-controls">
           <button
-            className="settings-fab"
-            onClick={() => setShowSettings(!showSettings)}
-            disabled={isRecording}
+            onClick={isRecording ? stopRecording : startRecording}
+            className={`recording-btn ${isRecording ? 'recording' : ''}`}
           >
-            <img src={settingsIcon} alt="Settings" width="24" height="24" />
+            <span className="recording-label">
+              {isRecording ? 'Stop Recording (Space)' : 'Start Recording (Space)'}
+            </span>
+            {isRecording && (
+              <span className="recording-progress">
+                {Math.floor(scrollOffset)}px / {canvasLength}px (Loop {currentLoopIndex + 1})
+              </span>
+            )}
           </button>
         </div>
+      </div>
+
+      <div className="controls">
+        {/* Top Center: App title */}
+        <div className="top-center">
+          <div className="app-title">Web Design Rokuro</div>
+        </div>
+
+        {/* Full Paint Mode button - hidden for now, activated by Shift key */}
+        {isRecording && isFullPaintMode && (
+          <div className="full-paint-indicator">
+            Full Paint Mode Active
+          </div>
+        )}
       </div>
 
       {showSettings && (
