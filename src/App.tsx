@@ -26,8 +26,6 @@ function App() {
   const [isEraserMode, setIsEraserMode] = useState(false)
   const [isPaused, setIsPaused] = useState(false)
   const [hasStartedRecording, setHasStartedRecording] = useState(false)
-  const [targetScrollSpeed, setTargetScrollSpeed] = useState(0)
-  const [currentScrollSpeed, setCurrentScrollSpeed] = useState(0)
   const [touchStartY, setTouchStartY] = useState<number | null>(null)
   const [lastTouchY, setLastTouchY] = useState<number | null>(null)
 
@@ -175,7 +173,6 @@ function App() {
       }
 
       currentScrollSpeedRef.current = currentSpeed
-      setCurrentScrollSpeed(currentSpeed)
 
       // Use ref for scroll offset to get the latest value (including manual scroll updates)
       let currentScrollOffset = scrollOffsetRef.current
