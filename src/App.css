@@ -5,7 +5,7 @@
 }
 
 body {
-  font-family: system-ui, -apple-system, sans-serif;
+  font-family: 'SUSE', monospace;
   background: #f0f0f0;
   overflow: hidden;
 }
@@ -25,12 +25,59 @@ body {
   display: inline-block;
 }
 
+/* Scroll direction indicator */
+.scroll-indicator {
+  position: absolute;
+  left: -30px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 100;
+  pointer-events: none;
+}
+
+.scroll-arrow {
+  font-size: 20px;
+  color: #666;
+  animation: pulse 0.8s ease-in-out infinite;
+}
+
+.scroll-arrow.up {
+  animation: slideUp 0.8s ease-in-out infinite;
+}
+
+.scroll-arrow.down {
+  animation: slideDown 0.8s ease-in-out infinite;
+}
+
+@keyframes slideUp {
+  0%, 100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  50% {
+    transform: translateY(-5px);
+    opacity: 0.6;
+  }
+}
+
+@keyframes slideDown {
+  0%, 100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  50% {
+    transform: translateY(5px);
+    opacity: 0.6;
+  }
+}
+
 .canvas {
   border: 1px solid #333;
   cursor: none;
   touch-action: none;
   background: white;
   display: block;
+  overscroll-behavior: none;
 }
 
 .brush-cursor {
@@ -220,6 +267,15 @@ button.recording-btn.recording {
 }
 
 button.recording-btn.recording:hover {
+  background: #4a4a4a;
+}
+
+button.active-mode {
+  background: #333;
+  color: white;
+}
+
+button.active-mode:hover:not(:disabled) {
   background: #4a4a4a;
 }
 

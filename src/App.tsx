@@ -23,6 +23,13 @@ function App() {
   const [cursorPosition, setCursorPosition] = useState<Point | null>(null)
   const [showCursor, setShowCursor] = useState(false)
   const [currentLoopIndex, setCurrentLoopIndex] = useState(0)
+  const [isEraserMode, setIsEraserMode] = useState(false)
+  const [isPaused, setIsPaused] = useState(false)
+  const [hasStartedRecording, setHasStartedRecording] = useState(false)
+  const [targetScrollSpeed, setTargetScrollSpeed] = useState(0)
+  const [currentScrollSpeed, setCurrentScrollSpeed] = useState(0)
+  const [touchStartY, setTouchStartY] = useState<number | null>(null)
+  const [lastTouchY, setLastTouchY] = useState<number | null>(null)
 
   const animationFrameRef = useRef<number | undefined>(undefined)
 
@@ -32,6 +39,10 @@ function App() {
   const currentDrawPointRef = useRef<Point | null>(null)
   const lastDrawTimeRef = useRef<number>(0)
   const scrollOffsetRef = useRef<number>(0)
+  const currentScrollSpeedRef = useRef<number>(0)
+  const isPausedRef = useRef<boolean>(false)
+  const hasStartedRecordingRef = useRef<boolean>(false)
+  const canvasLengthRef = useRef<number>(5000)
 
   // Initialize drawing canvas
   useEffect(() => {
@@ -65,11 +76,73 @@ function App() {
     }
   }, [canvasLength])
 
-  // Unified animation loop for scrolling, drawing, and rendering
+  // Sync refs with state
   useEffect(() => {
-    if (!isRecording) return
+    isPausedRef.current = isPaused
+  }, [isPaused])
 
-    let localScrollOffset = scrollOffset
+  useEffect(() => {
+    hasStartedRecordingRef.current = hasStartedRecording
+  }, [hasStartedRecording])
+
+  useEffect(() => {
+    canvasLengthRef.current = canvasLength
+  }, [canvasLength])
+
+  // Native wheel event listener - registered once on mount
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+
+    const handleNativeWheel = (e: WheelEvent) => {
+      // Use refs for most up-to-date values
+      const currentIsPaused = isPausedRef.current
+      const currentHasStarted = hasStartedRecordingRef.current
+      const currentCanvasLength = canvasLengthRef.current
+
+      // Only allow wheel scrolling when paused or not started
+      if (!currentIsPaused && currentHasStarted) {
+        return
+      }
+
+      e.preventDefault()
+      e.stopPropagation()
+
+      const drawingCanvas = drawingCanvasRef.current
+      if (!drawingCanvas) return
+
+      // Update scroll offset based on wheel delta
+      let newScrollOffset = scrollOffsetRef.current + e.deltaY * 0.5
+
+      // Wrap around
+      if (newScrollOffset >= currentCanvasLength) {
+        newScrollOffset = newScrollOffset % currentCanvasLength
+        setCurrentLoopIndex(idx => idx + 1)
+      } else if (newScrollOffset < 0) {
+        newScrollOffset = currentCanvasLength + (newScrollOffset % currentCanvasLength)
+        setCurrentLoopIndex(idx => Math.max(0, idx - 1))
+      }
+
+      scrollOffsetRef.current = newScrollOffset
+      setScrollOffset(newScrollOffset)
+
+      renderCanvas(newScrollOffset)
+    }
+
+    // Add native event listener with { passive: false } to allow preventDefault
+    canvas.addEventListener('wheel', handleNativeWheel, { passive: false })
+
+    return () => {
+      canvas.removeEventListener('wheel', handleNativeWheel)
+    }
+  }, []) // Empty dependency array - register only once on mount
+
+  // Main animation loop (handles both auto-scroll and inertia)
+  useEffect(() => {
+    if (!hasStartedRecording) return
+
+    const ACCELERATION = 0.15 // More responsive acceleration
+    const DECELERATION = 0.12 // More responsive deceleration
 
     const animate = () => {
       const canvas = canvasRef.current
@@ -87,25 +160,47 @@ function App() {
         return
       }
 
-      // Update scroll offset (use local variable to avoid React state delays)
-      localScrollOffset += scrollSpeed
+      // Handle inertia for scroll speed
+      let currentSpeed = currentScrollSpeedRef.current
+      const targetSpeed = isPaused ? 0 : scrollSpeed
 
-      // Check if we've completed a loop
-      if (localScrollOffset >= canvasLength) {
-        setCurrentLoopIndex(idx => idx + 1)
-        localScrollOffset = localScrollOffset - canvasLength
+      if (Math.abs(currentSpeed - targetSpeed) > 0.01) {
+        if (currentSpeed < targetSpeed) {
+          currentSpeed = Math.min(currentSpeed + ACCELERATION, targetSpeed)
+        } else if (currentSpeed > targetSpeed) {
+          currentSpeed = Math.max(currentSpeed - DECELERATION, targetSpeed)
+        }
+      } else {
+        currentSpeed = targetSpeed
       }
 
-      // Update both React state (for UI display) and ref (for drawing functions)
-      setScrollOffset(localScrollOffset)
-      scrollOffsetRef.current = localScrollOffset
+      currentScrollSpeedRef.current = currentSpeed
+      setCurrentScrollSpeed(currentSpeed)
 
-      // Continuous drawing in normal mode
-      if (isDrawingRef.current && currentDrawPointRef.current && !isFullPaintActive) {
+      // Use ref for scroll offset to get the latest value (including manual scroll updates)
+      let currentScrollOffset = scrollOffsetRef.current
+
+      // Update scroll offset only when scrolling
+      if (currentSpeed > 0.001) {
+        currentScrollOffset += currentSpeed
+
+        // Check if we've completed a loop
+        if (currentScrollOffset >= canvasLength) {
+          setCurrentLoopIndex(idx => idx + 1)
+          currentScrollOffset = currentScrollOffset - canvasLength
+        }
+
+        // Update both React state (for UI display) and ref (for drawing functions)
+        setScrollOffset(currentScrollOffset)
+        scrollOffsetRef.current = currentScrollOffset
+      }
+
+      // Continuous drawing in normal mode (only when not paused and scrolling)
+      if (isDrawingRef.current && currentDrawPointRef.current && !isFullPaintActive && currentSpeed > 0.01) {
         const point = currentDrawPointRef.current
-        const virtualY = (point.y + localScrollOffset) % canvasLength // Wrap around for loop recording
+        const virtualY = (point.y + currentScrollOffset) % canvasLength // Wrap around for loop recording
 
-        drawingCtx.fillStyle = '#000000'
+        drawingCtx.fillStyle = isEraserMode ? '#ffffff' : '#000000'
         const brushWidth = brushSize
         const brushHeight = brushSize / 8
         drawingCtx.fillRect(
@@ -116,47 +211,49 @@ function App() {
         )
       }
 
-      // Continuous drawing in Full Paint Mode
-      if (isFullPaintActive && fullPaintStartY !== null) {
-        const virtualY = (fullPaintStartY + localScrollOffset) % canvasLength // Wrap around for loop recording
+      // Continuous drawing in Full Paint Mode (only when not paused and scrolling)
+      if (isFullPaintActive && fullPaintStartY !== null && currentSpeed > 0.01) {
+        const virtualY = (fullPaintStartY + currentScrollOffset) % canvasLength // Wrap around for loop recording
 
         drawingCtx.fillStyle = '#000000'
         drawingCtx.fillRect(0, virtualY - 2, canvas.width, 4)
       }
 
-      // Render to display canvas (moved here from useEffect)
-      displayCtx.fillStyle = 'white'
-      displayCtx.fillRect(0, 0, canvas.width, canvas.height)
+      // Render to display canvas (only when scrolling, not when paused and still)
+      if (currentSpeed > 0.001 || !isPaused) {
+        displayCtx.fillStyle = 'white'
+        displayCtx.fillRect(0, 0, canvas.width, canvas.height)
 
-      const availableHeight = canvasLength - localScrollOffset
+        const availableHeight = canvasLength - currentScrollOffset
 
-      if (availableHeight >= canvas.height) {
-        // Simple case: enough space to show full viewport
-        displayCtx.drawImage(
-          drawingCanvas,
-          0, localScrollOffset,
-          canvas.width, canvas.height,
-          0, 0,
-          canvas.width, canvas.height
-        )
-      } else {
-        // Near end: show what's available from current position
-        displayCtx.drawImage(
-          drawingCanvas,
-          0, localScrollOffset,
-          canvas.width, availableHeight,
-          0, 0,
-          canvas.width, availableHeight
-        )
-        // Show the beginning of the canvas for the remaining space (loop visualization)
-        const remainingHeight = canvas.height - availableHeight
-        displayCtx.drawImage(
-          drawingCanvas,
-          0, 0,
-          canvas.width, remainingHeight,
-          0, availableHeight,
-          canvas.width, remainingHeight
-        )
+        if (availableHeight >= canvas.height) {
+          // Simple case: enough space to show full viewport
+          displayCtx.drawImage(
+            drawingCanvas,
+            0, currentScrollOffset,
+            canvas.width, canvas.height,
+            0, 0,
+            canvas.width, canvas.height
+          )
+        } else {
+          // Near end: show what's available from current position
+          displayCtx.drawImage(
+            drawingCanvas,
+            0, currentScrollOffset,
+            canvas.width, availableHeight,
+            0, 0,
+            canvas.width, availableHeight
+          )
+          // Show the beginning of the canvas for the remaining space (loop visualization)
+          const remainingHeight = canvas.height - availableHeight
+          displayCtx.drawImage(
+            drawingCanvas,
+            0, 0,
+            canvas.width, remainingHeight,
+            0, availableHeight,
+            canvas.width, remainingHeight
+          )
+        }
       }
 
       animationFrameRef.current = requestAnimationFrame(animate)
@@ -169,26 +266,28 @@ function App() {
         cancelAnimationFrame(animationFrameRef.current)
       }
     }
-  }, [isRecording, scrollSpeed, brushSize, isFullPaintActive, fullPaintStartY, canvasLength])
+  }, [hasStartedRecording, isPaused, scrollSpeed, brushSize, isFullPaintActive, fullPaintStartY, canvasLength, isEraserMode])
 
-  // Keyboard event listener for Shift (Full Paint) and Space (Start/Stop Recording)
+  // Keyboard event listener for Shift (Full Paint) and Space (Start/Pause/Resume)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Shift key for Full Paint Mode
       if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
-        if (!e.repeat && isRecording) {
+        if (!e.repeat && hasStartedRecording) {
           e.preventDefault()
           setIsFullPaintMode(true)
         }
       }
 
-      // Space key for Start/Stop Recording
+      // Space key for Start/Pause/Resume Recording
       if (e.code === 'Space' && !e.repeat) {
         e.preventDefault()
-        if (isRecording) {
-          stopRecording()
-        } else {
+        if (!hasStartedRecording) {
           startRecording()
+        } else if (isPaused) {
+          resumeRecording()
+        } else {
+          pauseRecording()
         }
       }
     }
@@ -207,7 +306,7 @@ function App() {
       window.removeEventListener('keydown', handleKeyDown)
       window.removeEventListener('keyup', handleKeyUp)
     }
-  }, [isRecording])
+  }, [hasStartedRecording, isPaused])
 
   const startRecording = () => {
     const canvas = canvasRef.current
@@ -227,12 +326,18 @@ function App() {
     drawingCanvasRef.current = drawingCanvas
 
     setIsRecording(true)
+    setIsPaused(false)
+    setHasStartedRecording(true)
     setScrollOffset(0)
     setCurrentLoopIndex(0)
   }
 
-  const stopRecording = () => {
-    setIsRecording(false)
+  const pauseRecording = () => {
+    setIsPaused(true)
+  }
+
+  const resumeRecording = () => {
+    setIsPaused(false)
   }
 
   const drawBrush = (x: number, y: number) => {
@@ -246,10 +351,15 @@ function App() {
     const ctx = drawingCanvas.getContext('2d')
     if (!ctx) return
 
-    ctx.fillStyle = '#000000'
+    ctx.fillStyle = isEraserMode ? '#ffffff' : '#000000'
     const brushWidth = brushSize
     const brushHeight = brushSize / 8
     ctx.fillRect(x - brushWidth / 2, virtualY - brushHeight / 2, brushWidth, brushHeight)
+
+    // Render immediately when paused to show drawing updates
+    if (isPaused) {
+      renderCanvas(currentScrollOffset)
+    }
   }
 
   // Optimized drawLine using efficient interpolation
@@ -270,7 +380,7 @@ function App() {
     // Optimize steps based on brush size - fewer steps for larger brushes
     const steps = Math.ceil(distance / Math.max(brushHeight * 0.5, 1))
 
-    ctx.fillStyle = '#000000'
+    ctx.fillStyle = isEraserMode ? '#ffffff' : '#000000'
     const brushWidth = brushSize
 
     for (let i = 0; i <= steps; i++) {
@@ -281,10 +391,16 @@ function App() {
 
       ctx.fillRect(x - brushWidth / 2, virtualY - brushHeight / 2, brushWidth, brushHeight)
     }
+
+    // Render immediately when paused to show drawing updates
+    if (isPaused) {
+      renderCanvas(currentScrollOffset)
+    }
   }
 
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!isRecording) return
+    // Allow drawing even when paused, just need to have started recording
+    if (!hasStartedRecording) return
 
     e.preventDefault()
 
@@ -317,7 +433,7 @@ function App() {
 
     setCursorPosition({ x, y })
 
-    if (!isRecording) return
+    if (!hasStartedRecording) return
 
     e.preventDefault()
 
@@ -348,6 +464,98 @@ function App() {
     setCursorPosition(null)
   }
 
+  const renderCanvas = (newScrollOffset: number) => {
+    const canvas = canvasRef.current
+    const drawingCanvas = drawingCanvasRef.current
+    if (!canvas || !drawingCanvas) {
+      return
+    }
+
+    const displayCtx = canvas.getContext('2d')
+    if (!displayCtx) {
+      return
+    }
+
+    const currentCanvasLength = canvasLengthRef.current
+
+    displayCtx.fillStyle = 'white'
+    displayCtx.fillRect(0, 0, canvas.width, canvas.height)
+
+    const availableHeight = currentCanvasLength - newScrollOffset
+
+    if (availableHeight >= canvas.height) {
+      displayCtx.drawImage(
+        drawingCanvas,
+        0, newScrollOffset,
+        canvas.width, canvas.height,
+        0, 0,
+        canvas.width, canvas.height
+      )
+    } else {
+      displayCtx.drawImage(
+        drawingCanvas,
+        0, newScrollOffset,
+        canvas.width, availableHeight,
+        0, 0,
+        canvas.width, availableHeight
+      )
+      const remainingHeight = canvas.height - availableHeight
+      displayCtx.drawImage(
+        drawingCanvas,
+        0, 0,
+        canvas.width, remainingHeight,
+        0, availableHeight,
+        canvas.width, remainingHeight
+      )
+    }
+  }
+
+  const handleTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    // When paused or not started, allow scrolling
+    if (isPaused || !hasStartedRecording) {
+      const touch = e.touches[0]
+      setTouchStartY(touch.clientY)
+      setLastTouchY(touch.clientY)
+    }
+    // Otherwise, let pointer events handle drawing
+  }
+
+  const handleTouchMove = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    // When paused or not started, allow scrolling
+    if (isPaused || !hasStartedRecording) {
+      if (touchStartY === null || lastTouchY === null) return
+
+      e.preventDefault()
+
+      const touch = e.touches[0]
+      const deltaY = lastTouchY - touch.clientY
+      setLastTouchY(touch.clientY)
+
+      // Update scroll offset based on touch delta
+      let newScrollOffset = scrollOffsetRef.current + deltaY
+
+      // Wrap around
+      if (newScrollOffset >= canvasLength) {
+        newScrollOffset = newScrollOffset % canvasLength
+        setCurrentLoopIndex(idx => idx + 1)
+      } else if (newScrollOffset < 0) {
+        newScrollOffset = canvasLength + (newScrollOffset % canvasLength)
+        setCurrentLoopIndex(idx => Math.max(0, idx - 1))
+      }
+
+      scrollOffsetRef.current = newScrollOffset
+      setScrollOffset(newScrollOffset)
+
+      renderCanvas(newScrollOffset)
+    }
+    // Otherwise, let pointer events handle drawing
+  }
+
+  const handleTouchEnd = () => {
+    setTouchStartY(null)
+    setLastTouchY(null)
+  }
+
   const handlePointerUp = () => {
     setIsDrawing(false)
     isDrawingRef.current = false
@@ -375,6 +583,11 @@ function App() {
     const maxY = Math.max(virtualStartY, virtualEndY)
 
     ctx.fillRect(0, minY, canvas.width, maxY - minY)
+
+    // Render immediately when paused to show drawing updates
+    if (isPaused) {
+      renderCanvas(currentScrollOffset)
+    }
   }
 
   const handleClear = () => {
@@ -382,21 +595,25 @@ function App() {
     const drawingCanvas = drawingCanvasRef.current
     if (!canvas || !drawingCanvas) return
 
-    const ctx = drawingCanvas.getContext('2d')
-    if (!ctx) return
+    const drawingCtx = drawingCanvas.getContext('2d')
+    if (!drawingCtx) return
 
-    ctx.fillStyle = 'white'
-    ctx.fillRect(0, 0, drawingCanvas.width, drawingCanvas.height)
+    // Clear the drawing canvas
+    drawingCtx.fillStyle = 'white'
+    drawingCtx.fillRect(0, 0, drawingCanvas.width, drawingCanvas.height)
+
+    // Also update the display canvas immediately
+    const displayCtx = canvas.getContext('2d')
+    if (displayCtx) {
+      displayCtx.fillStyle = 'white'
+      displayCtx.fillRect(0, 0, canvas.width, canvas.height)
+    }
 
     setCurrentLoopIndex(0)
     setScrollOffset(0)
+    scrollOffsetRef.current = 0
   }
 
-  const handleUndoLastLoop = () => {
-    // Temporarily disabled - will implement with proper drawing history
-    alert('Undo Last Loop feature is temporarily disabled for performance optimization')
-    return
-  }
 
   const handleExport = () => {
     const canvas = canvasRef.current
@@ -462,6 +679,9 @@ function App() {
           onPointerLeave={handlePointerUp}
           onMouseEnter={handleCanvasMouseEnter}
           onMouseLeave={handleCanvasMouseLeave}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
         />
 
         {/* Brush preview cursor */}
@@ -497,7 +717,6 @@ function App() {
             <button
               className="settings-btn"
               onClick={() => setShowSettings(!showSettings)}
-              disabled={isRecording}
             >
               Settings
             </button>
@@ -505,8 +724,19 @@ function App() {
 
           {/* Top Right: Drawing actions */}
           <div className="top-right">
-            <button onClick={handleUndoLastLoop} disabled={!isRecording}>
-              Undo
+            <button
+              onClick={() => setIsEraserMode(false)}
+              disabled={isRecording && !isEraserMode}
+              className={!isEraserMode ? 'active-mode' : ''}
+            >
+              Draw
+            </button>
+            <button
+              onClick={() => setIsEraserMode(true)}
+              disabled={isRecording && isEraserMode}
+              className={isEraserMode ? 'active-mode' : ''}
+            >
+              Eraser
             </button>
             <button onClick={handleClear}>Clear</button>
             <button onClick={handleExport}>Export</button>
@@ -516,13 +746,25 @@ function App() {
         {/* Bottom Center: Recording control with progress */}
         <div className="canvas-bottom-controls">
           <button
-            onClick={isRecording ? stopRecording : startRecording}
-            className={`recording-btn ${isRecording ? 'recording' : ''}`}
+            onClick={() => {
+              if (!hasStartedRecording) {
+                startRecording()
+              } else if (isPaused) {
+                resumeRecording()
+              } else {
+                pauseRecording()
+              }
+            }}
+            className={`recording-btn ${isRecording && !isPaused ? 'recording' : ''}`}
           >
             <span className="recording-label">
-              {isRecording ? 'Stop Recording (Space)' : 'Start Recording (Space)'}
+              {!hasStartedRecording
+                ? 'Start Recording (Space)'
+                : isPaused
+                ? 'Resume Recording (Space)'
+                : 'Pause Recording (Space)'}
             </span>
-            {isRecording && (
+            {hasStartedRecording && (
               <span className="recording-progress">
                 {Math.floor(scrollOffset)}px / {canvasLength}px (Loop {currentLoopIndex + 1})
               </span>
